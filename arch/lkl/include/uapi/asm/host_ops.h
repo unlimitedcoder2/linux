@@ -189,6 +189,8 @@ struct lkl_host_operations {
 				enum lkl_prot prot);
 
 	struct lkl_dev_pci_ops *pci_ops;
+	int (*load_firmware)(const char *name, void **dest, unsigned long long *size, void *userdata);
+	void *userdata;
 };
 
 /**
@@ -223,5 +225,7 @@ int lkl_is_running(void);
 
 int lkl_printf(const char *fmt, ...);
 void lkl_bug(const char *fmt, ...);
+
+int lkl_load_firmware(const char *name, void **dest, unsigned long long *size);
 
 #endif

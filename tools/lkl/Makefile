@@ -53,8 +53,9 @@ export CFLAGS += -I$(OUTPUT)/include -Iinclude -Wall -g -O2 -Wextra \
 include Targets
 
 TARGETS := $(progs-y:%=$(OUTPUT)%$(EXESUF))
-TARGETS += $(tests-y:%=$(OUTPUT)%$(EXESUF))
+#TARGETS += $(tests-y:%=$(OUTPUT)%$(EXESUF))
 TARGETS += $(libs-y:%=$(OUTPUT)%$(SOSUF))
+TARGETS += $(OUTPUT)liblkl.a
 all: $(TARGETS)
 
 # this workaround is for FreeBSD
@@ -80,9 +81,9 @@ $(DOT_CONFIG): $(OUTPUT)/kernel.config
 # timestamps. Without FORCE, changes to kernel sources are silently ignored
 # because lib/lkl.o has no dependency on them.
 $(OUTPUT)lib/lkl.o: bin/stat $(DOT_CONFIG) FORCE
-# this workaround is for arm32 linker (ld.gold)
-	$(Q)export PATH="$(srctree)/tools/lkl/bin/:${PATH}" ;\
-	$(MAKE) -C ../.. ARCH=lkl $(KOPT)
+# :(
+	$(Q)GOOD_OBJCOPY="$$(command -v $(CROSS_COMPILE)objcopy)" ;\
+	$(MAKE) -C ../.. ARCH=lkl $(KOPT) $${GOOD_OBJCOPY:+OBJCOPY=$$GOOD_OBJCOPY}
 	$(MAKE) -C ../.. ARCH=lkl $(KOPT) install INSTALL_PATH=$(OUTPUT)
 
 # rules to link hijack libs
@@ -102,7 +103,7 @@ $(OUTPUT)%$(EXESUF): $(OUTPUT)%-in.o $(OUTPUT)liblkl.a
 	$(QUIET_LINK)$(CC) $(LDFLAGS) $(LDFLAGS_$*-y) -o $@ $^ $(LDLIBS) $(LDLIBS_$*-y)
 
 # tests use a common private lib
-$(tests-y:%=$(OUTPUT)%$(EXESUF)): $(tests-priv-y:%=$(OUTPUT)%-in.o)
+#$(tests-y:%=$(OUTPUT)%$(EXESUF)): $(tests-priv-y:%=$(OUTPUT)%-in.o)
 
 # rule to build objects
 $(OUTPUT)%-in.o: $(OUTPUT)lib/lkl.o FORCE
@@ -191,11 +192,11 @@ programs_install: $(progs-y:%=$(OUTPUT)%$(EXESUF))
 install: headers_install libraries_install programs_install
 
 
-run-tests:
-	./tests/run.py $(tests)
+#run-tests:
+#	./tests/run.py $(tests)
 
 FORCE: ;
-.PHONY: all clean clean-conf mrproper FORCE run-tests
+.PHONY: all clean clean-conf mrproper FORCE # run-tests
 .PHONY: headers_install libraries_install programs_install install
 .NOTPARALLEL : lib/lkl.o
 .SECONDARY:

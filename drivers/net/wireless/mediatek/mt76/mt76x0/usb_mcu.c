@@ -92,8 +92,9 @@ static int mt76x0u_load_firmware(struct mt76x02_dev *dev)
 	mt76_wr(dev, MT_USB_DMA_CFG, (MT_USB_DMA_CFG_RX_BULK_EN |
 				      MT_USB_DMA_CFG_TX_BULK_EN));
 
-	if (mt76x0_firmware_running(dev))
-		return 0;
+	if (mt76x0_firmware_running(dev)) {
+			dev_info(dev->mt76.dev, "reloading device for a clean state\n");
+	}
 
 	ret = mt76x0_get_firmware(dev, &fw);
 	if (ret)

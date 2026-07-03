@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <timeapi.h>
 #include <assert.h>
 #include <unistd.h>
 #undef s_addr
@@ -185,6 +186,7 @@ static void *timer_alloc(void (*fn)(void))
 {
 	struct timer *t;
 
+	timeBeginPeriod(1);
 	t = malloc(sizeof(*t));
 	if (!t)
 		return NULL;
@@ -213,8 +215,7 @@ static int timer_set_oneshot(void *timer, unsigned long ns)
 	struct timer *t = (struct timer *)timer;
 	HANDLE tmp;
 
-	return !CreateTimerQueueTimer(&tmp, t->queue, timer_callback, t,
-				      ns / 1000000, 0, 0);
+	return !CreateTimerQueueTimer(&tmp, t->queue, timer_callback, t, (ns + 999999) / 1000000, 0, 0);
 }
 
 static void timer_free(void *timer)

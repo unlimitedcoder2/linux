@@ -729,3 +729,9 @@ config USB_XEN_HCD
 	  by the Xen host (usually Dom0).
 	  Only needed if the kernel is running in a Xen guest and generic
 	  access to a USB device is needed.
+
+config USB_LKL_HCD
+	tristate "LKL host-backed USB host controller"
+	depends on USB
+	help
+	  A virtual usb

@@ -16,6 +16,14 @@
 #include <linux/screen_info.h>
 
 struct lkl_host_operations *lkl_ops;
+
+int lkl_load_firmware(const char *name, void **dest, unsigned long long *size)
+{
+	if (!lkl_ops || !lkl_ops->load_firmware)
+		return -1;
+	return lkl_ops->load_firmware(name, dest, size, lkl_ops->userdata);
+}
+
 static char cmd_line[COMMAND_LINE_SIZE];
 static void *init_sem;
 static int is_running;

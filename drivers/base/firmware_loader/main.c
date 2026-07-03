@@ -759,6 +759,24 @@ _request_firmware_prepare(struct firmware **firmware_p, const char *name,
 		return 0; /* assigned */
 	}
 
+	if (!dbuf) {
+		void *host_fw = NULL;
+		unsigned long long host_sz = 0;
+
+		if (lkl_load_firmware(name, &host_fw, &host_sz) == 0 &&
+		    host_fw && host_sz) {
+			void *kbuf = vmalloc(host_sz);
+
+			if (!kbuf)
+				return -ENOMEM;
+			memcpy(kbuf, host_fw, host_sz);
+			firmware->data = kbuf;
+			firmware->size = host_sz;
+			dev_dbg(device, "using host-provided %s\n", name);
+			return 0; /* assigned */
+		}
+	}
+
 	ret = alloc_lookup_fw_priv(name, &fw_cache, &fw_priv, dbuf, size,
 				   offset, opt_flags);
 
@@ -888,6 +906,8 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 		ret = -EINVAL;
 		goto out;
 	}
+
+	lkl_printf("Requesting firmware for %s\n", name);
 
 	if (name_contains_dotdot(name)) {
 		dev_warn(device,
