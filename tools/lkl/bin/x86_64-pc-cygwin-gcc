@@ -1,0 +1,3 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0
+exec "${LKL_CYGWIN_CLANG:-clang}" --target=x86_64-pc-cygwin "$@"

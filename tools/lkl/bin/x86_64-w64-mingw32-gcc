@@ -6,24 +6,17 @@
 # The LKL API header uses __lkl_long_t (always 64-bit) to bridge the difference.
 LKL_BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Kernel code (compilation or linking) → cygwin-gcc (LP64).
-# Needed because: (a) kernel needs long=64-bit, (b) 320MB kernel object
-# causes IMAGE_REL_AMD64_REL32 overflow with MinGW ld, cygwin ld handles it.
-for arg in "$@"; do
-    if [[ "$arg" == "-D__KERNEL__" || "$arg" == *lkl.o ]]; then
-        exec "$(which x86_64-pc-cygwin-gcc)" "$@"
-    fi
-done
-# Linking without -c flag (objects from both kernel and userspace) → cygwin-gcc.
-# MinGW ld can't link the cygwin-compiled kernel objects.
 case " $* " in
-    *" -c "*|*" -S "*|*" -E "*) ;;
-    *) exec "$(which x86_64-pc-cygwin-gcc)" "$@" ;;
+    *" -c "*|*" -S "*|*" -E "*)
+        for arg in "$@"; do
+            if [[ "$arg" == "-D__KERNEL__" || "$arg" == *lkl.o ]]; then
+                exec "$(which x86_64-pc-cygwin-gcc)" "$@"
+            fi
+        done
+        ;;
 esac
 
-# User-space compilation: use mingw-gcc with patched ld via specs
-SPECS="$LKL_BIN_DIR/.lkl-linker.specs"
-if [[ ! -f "$SPECS" ]]; then
-    printf '*linker:\n%s/x86_64-w64-mingw32-ld\n' "$LKL_BIN_DIR" > "$SPECS"
-fi
-exec "$(PATH="${PATH#*:}" which x86_64-w64-mingw32-gcc)" -specs="$SPECS" "$@"
+PATH="${PATH//"$LKL_BIN_DIR":/}"
+PATH="${PATH//:"$LKL_BIN_DIR"/}"
+export PATH
+exec "$(which x86_64-w64-mingw32-gcc)" "$@"

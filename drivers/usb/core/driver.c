@@ -25,15 +25,14 @@
  *
  */
 
+#include "linux/stddef.h"
 #include <linux/device.h>
 #include <linux/slab.h>
 #include <linux/export.h>
 #include <linux/usb.h>
 #include <linux/usb/quirks.h>
 #include <linux/usb/hcd.h>
-
 #include "usb.h"
-
 
 /*
  * Adds a new dynamic USBdevice ID to this driver,
@@ -912,6 +911,42 @@ static int usb_device_match(struct device *dev, const struct device_driver *drv)
 	return 0;
 }
 
+struct usb_find_driver_ctx {
+	u16 vid, pid;
+	struct device_driver *found;
+};
+
+static int usb_find_driver_iter(struct device_driver *drv, void *data)
+{
+	struct usb_find_driver_ctx *ctx = data;
+	const struct usb_device_id *id;
+
+	id = is_usb_device_driver(drv) ? to_usb_device_driver(drv)->id_table
+				       : to_usb_driver(drv)->id_table;
+	for (; id && (id->idVendor || id->idProduct || id->bDeviceClass ||
+		      id->bInterfaceClass || id->driver_info); id++) {
+		if ((id->match_flags & USB_DEVICE_ID_MATCH_DEVICE) ==
+				USB_DEVICE_ID_MATCH_DEVICE &&
+		    id->idVendor == ctx->vid && id->idProduct == ctx->pid) {
+			ctx->found = drv;
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+struct device_driver *usb_find_driver(u16 vid, u16 pid,
+				      struct device_driver *start)
+{
+	struct usb_find_driver_ctx ctx = { .vid = vid, .pid = pid };
+
+	bus_for_each_drv(&usb_bus_type, start, &ctx, usb_find_driver_iter);
+
+	return ctx.found;
+}
+EXPORT_SYMBOL_GPL(usb_find_driver);
+
 static int usb_uevent(const struct device *dev, struct kobj_uevent_env *env)
 {
 	const struct usb_device *usb_dev;
@@ -1217,6 +1252,41 @@ void usb_unbind_and_rebind_marked_interfaces(struct usb_device *udev)
 	unbind_marked_interfaces(udev);
 	rebind_marked_interfaces(udev);
 }
+
+extern const char __start_lkl_modinfo[], __stop_lkl_modinfo[];
+
+static void lkl_print_modinfo_firmware(const char *mod_name, void (*callback)(const char *fw, void *userdata), void *userdata)
+{
+	size_t len = strlen(mod_name);
+	const char *p;
+
+	#define FIRMWARE_KEY ".firmware="
+
+	for (p = __start_lkl_modinfo; p < __stop_lkl_modinfo; p += strlen(p) + 1) {
+		if (!strncmp(p, mod_name, len) && !strncmp(p + len, FIRMWARE_KEY, strlen(FIRMWARE_KEY))) {
+			const char *fw = p + len + strlen(FIRMWARE_KEY);
+			pr_info("- : %s\n", fw);
+			callback(fw, userdata);
+		}
+	}
+
+	#undef FIRMWARE_KEY
+}
+
+void lkl_get_driverinfo(int vid, int pid, void (*callback)(const char *fw, void *userdata), void *userdata)
+{
+	struct device_driver *drv = NULL;
+
+	while ((drv = usb_find_driver(vid, pid, drv))) {
+		pr_info("Found driver: %s\n", drv->name);
+
+		if (drv->mod_name) {
+			lkl_print_modinfo_firmware(drv->mod_name, callback, userdata);
+		}
+	}
+}
+
+EXPORT_SYMBOL_GPL(lkl_get_driverinfo);
 
 #ifdef CONFIG_PM
 

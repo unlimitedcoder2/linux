@@ -6,6 +6,10 @@ MAKEFLAGS += -r --no-print-directory
 
 KCONFIG?=defconfig
 
+ifneq ($(wildcard $(CURDIR)/bin/$(CROSS_COMPILE)gcc),)
+  export PATH := $(CURDIR)/bin:$(PATH)
+endif
+
 ifneq ($(silent),1)
   ifneq ($(V),1)
 	QUIET_AUTOCONF       = @echo '  AUTOCONF '$@;
@@ -52,9 +56,9 @@ export CFLAGS += -I$(OUTPUT)/include -Iinclude -Wall -g -O2 -Wextra \
 
 include Targets
 
-TARGETS := $(progs-y:%=$(OUTPUT)%$(EXESUF))
+# TARGETS := $(progs-y:%=$(OUTPUT)%$(EXESUF))
 #TARGETS += $(tests-y:%=$(OUTPUT)%$(EXESUF))
-TARGETS += $(libs-y:%=$(OUTPUT)%$(SOSUF))
+# TARGETS += $(libs-y:%=$(OUTPUT)%$(SOSUF))
 TARGETS += $(OUTPUT)liblkl.a
 all: $(TARGETS)
 
@@ -97,6 +101,9 @@ $(OUTPUT)lib/liblkl$(SOSUF): $(OUTPUT)lib/liblkl-in.o $(OUTPUT)lib/lkl.o
 
 $(OUTPUT)liblkl.a: $(OUTPUT)lib/liblkl-in.o $(OUTPUT)lib/lkl.o
 	$(QUIET_AR)$(AR) -rc $@ $^
+ifeq ($(LKL_HOST_CONFIG_NT),y)
+	$(Q)$(CROSS_COMPILE)objcopy --remove-section=.pdata --remove-section=.llvm_addrsig $@
+endif
 
 # rule to link programs
 $(OUTPUT)%$(EXESUF): $(OUTPUT)%-in.o $(OUTPUT)liblkl.a

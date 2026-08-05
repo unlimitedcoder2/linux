@@ -53,7 +53,7 @@ LDFLAGS_vmlinux += -r
 LKL_ENTRY_POINTS := lkl_start_kernel lkl_sys_halt lkl_syscall lkl_trigger_irq \
 	lkl_get_free_irq lkl_put_irq lkl_is_running lkl_bug lkl_printf \
 	lkl_init lkl_cleanup lkl_usb_attach lkl_usb_detach \
-	lkl_usb_completion_irq
+	lkl_usb_completion_irq lkl_get_driverinfo
 
 ifeq ($(CONFIG_OUTPUT_FORMAT),elf32-i386)
 LKL_ENTRY_POINTS += \
@@ -95,7 +95,7 @@ quiet_cmd_link_lkl = OBJCOPY $@
                      --prefix-symbols=$(prefix) $< $@.new && \
                      $(if $(filter pe,$(exec_format)), \
                        $(PYTHON3) $(srctree)/arch/lkl/scripts/fixup_pe_weak.py \
-                         $@.new $(OBJDUMP) $(OBJCOPY) && ) \
+                         $@.new $(OBJDUMP) $(OBJCOPY) $(objtree)/kernel/sys_ni.o && ) \
                      { if cmp -s $@.new $@; then rm -f $@.new; \
                        else mv -f $@.new $@; fi; }
 

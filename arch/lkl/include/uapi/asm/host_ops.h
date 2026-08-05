@@ -133,7 +133,7 @@ enum lkl_prot {
 struct lkl_host_operations {
 	const char *virtio_devices;
 
-	void (*print)(const char *str, int len);
+	void (*print)(const char *str, int len, void *userdata);
 	void (*panic)(void);
 
 	struct lkl_sem* (*sem_alloc)(int count);

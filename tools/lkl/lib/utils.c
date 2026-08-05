@@ -4,7 +4,7 @@
 #include <string.h>
 #include <lkl_host.h>
 
-static const char * const lkl_err_strings[] = {
+static const char *const lkl_err_strings[] = {
 	"Success",
 	"Operation not permitted",
 	"No such file or directory",
@@ -179,7 +179,7 @@ static int lkl_vprintf(const char *fmt, va_list args)
 
 	vsnprintf(buffer, n + 1, fmt, args);
 
-	lkl_host_ops.print(buffer, n);
+	lkl_host_ops.print(buffer, n, lkl_host_ops.userdata);
 	lkl_host_ops.mem_free(buffer);
 
 	return n;
@@ -226,14 +226,14 @@ int lkl_sysctl(const char *path, const char *value)
 
 	fd = lkl_sys_open(full_path, LKL_O_WRONLY | LKL_O_CREAT, 0);
 	if (fd < 0) {
-		lkl_printf("lkl_sys_open %s: %s\n",
-			   full_path, lkl_strerror(fd));
+		lkl_printf("lkl_sys_open %s: %s\n", full_path,
+			   lkl_strerror(fd));
 		return -1;
 	}
 	ret = lkl_sys_write(fd, value, strlen(value));
 	if (ret < 0) {
-		lkl_printf("lkl_sys_write %s: %s\n",
-			full_path, lkl_strerror(fd));
+		lkl_printf("lkl_sys_write %s: %s\n", full_path,
+			   lkl_strerror(fd));
 	}
 
 	lkl_sys_close(fd);

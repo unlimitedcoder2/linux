@@ -93,8 +93,13 @@
 #define __INIT		.section	".init.text","ax"
 #define __FINIT		.previous
 
+#if defined(__MINGW32__) || defined(__CYGWIN__)
+#define __INITDATA	.section	".init.data","aw"
+#define __INITRODATA	.section	".init.rodata","a"
+#else
 #define __INITDATA	.section	".init.data","aw",%progbits
 #define __INITRODATA	.section	".init.rodata","a",%progbits
+#endif
 #define __FINITDATA	.previous
 
 /* silence warnings when references are OK */

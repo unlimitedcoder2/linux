@@ -71,8 +71,10 @@ SECTIONS
 	STABS_DEBUG
 	DWARF_DEBUG
 
-	/DISCARD/ : {
+	.lkl_modinfo : {
+		__start_lkl_modinfo = .;
 		*(.modinfo)
+		__stop_lkl_modinfo = .;
 	}
 
 	// Don't include DISCARDS section to build the target with code coverage.

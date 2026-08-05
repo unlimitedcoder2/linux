@@ -555,14 +555,14 @@ int lkl_usb_attach(const struct lkl_usb_host_ops *ops)
 	lkl_hcd_dbg("lkl-hcd: attach requested (worker will report connect)\n");
 	return 0;
 }
-EXPORT_SYMBOL(lkl_usb_attach);
+EXPORT_SYMBOL_GPL(lkl_usb_attach);
 
 void lkl_usb_detach(void)
 {
 	lkl_hcd_dbg("lkl-hcd: detach requested\n");
 	lkl_usb_detach_pending = 1;
 }
-EXPORT_SYMBOL(lkl_usb_detach);
+EXPORT_SYMBOL_GPL(lkl_usb_detach);
 
 static int lkl_hcd_probe(struct platform_device *pdev)
 {
@@ -631,7 +631,7 @@ int lkl_usb_completion_irq(void)
 {
 	return lkl_hcd_singleton ? lkl_hcd_singleton->irq : -1;
 }
-EXPORT_SYMBOL(lkl_usb_completion_irq);
+EXPORT_SYMBOL_GPL(lkl_usb_completion_irq);
 
 static void lkl_hcd_remove(struct platform_device *pdev)
 {

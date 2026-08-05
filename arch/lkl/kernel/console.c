@@ -6,7 +6,7 @@
 static void console_write(struct console *con, const char *str, unsigned len)
 {
 	if (lkl_ops->print)
-		lkl_ops->print(str, len);
+		lkl_ops->print(str, len, lkl_ops->userdata);
 }
 
 #ifdef CONFIG_LKL_EARLY_CONSOLE
