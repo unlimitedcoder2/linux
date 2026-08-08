@@ -640,12 +640,12 @@ static void rtw_usb_rx_handler(struct work_struct *work)
 				goto skip_packet;
 			}
 
-			if (pkt_stat.pkt_len <= FCS_LEN && !pkt_stat.is_c2h) {
+			/*if (pkt_stat.pkt_len <= FCS_LEN && !pkt_stat.is_c2h) {
 				rtw_dbg(rtwdev, RTW_DBG_USB,
 					"skipping too small packet: %u + %u\n",
 					pkt_offset, pkt_stat.pkt_len);
 				goto skip_packet;
-			}
+			}*/
 
 			skb = alloc_skb(skb_len, GFP_ATOMIC);
 			if (!skb) {

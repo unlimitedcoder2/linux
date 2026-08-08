@@ -24,6 +24,12 @@
 
 #define LKL_HCD_MAX_EP 32
 
+static_assert(sizeof(struct lkl_usb_setup) == sizeof(struct usb_ctrlrequest),
+	      "lkl_usb_setup must match the USB setup packet layout");
+static_assert(offsetof(struct lkl_usb_setup, wValue) ==
+	      offsetof(struct usb_ctrlrequest, wValue),
+	      "lkl_usb_setup fields must line up with usb_ctrlrequest");
+
 #define PORT_C_MASK							\
 	((USB_PORT_STAT_C_CONNECTION | USB_PORT_STAT_C_ENABLE |		\
 	  USB_PORT_STAT_C_SUSPEND | USB_PORT_STAT_C_OVERCURRENT |	\
@@ -54,6 +60,7 @@ struct lkl_hcd {
 	wait_queue_head_t wq;
 	atomic_t completed;
 	int irq;
+	struct platform_device *pdev;
 	struct usb_hcd *hcd;
 };
 
@@ -70,14 +77,15 @@ static inline struct lkl_hcd *hcd_to_lkl(struct usb_hcd *hcd)
 
 static bool lkl_hcd_ctrl_ack_only(struct urb *urb)
 {
-	const u8 *s = (const u8 *)urb->setup_packet;
+	const struct usb_ctrlrequest *req =
+		(const struct usb_ctrlrequest *)urb->setup_packet;
 
-	return usb_pipecontrol(urb->pipe) && s &&
-	       (s[0] & USB_TYPE_MASK) == USB_TYPE_STANDARD &&
-	       (s[0] & USB_DIR_IN) == 0 &&
-	       (s[1] == USB_REQ_SET_ADDRESS ||
-		s[1] == USB_REQ_SET_CONFIGURATION ||
-		s[1] == USB_REQ_SET_INTERFACE);
+	return usb_pipecontrol(urb->pipe) && req &&
+	       (req->bRequestType & USB_TYPE_MASK) == USB_TYPE_STANDARD &&
+	       (req->bRequestType & USB_DIR_IN) == 0 &&
+	       (req->bRequest == USB_REQ_SET_ADDRESS ||
+		req->bRequest == USB_REQ_SET_CONFIGURATION ||
+		req->bRequest == USB_REQ_SET_INTERFACE);
 }
 
 static void *lkl_hcd_submit_one(struct lkl_hcd *lh, struct urb *urb)
@@ -86,13 +94,14 @@ static void *lkl_hcd_submit_one(struct lkl_hcd *lh, struct urb *urb)
 	int len = urb->transfer_buffer_length;
 
 	if (usb_pipecontrol(pipe)) {
-		const u8 *s = (const u8 *)urb->setup_packet;
+		const struct usb_ctrlrequest *req =
+			(const struct usb_ctrlrequest *)urb->setup_packet;
 
 		lkl_hcd_dbg("lkl-hcd: xfer ctrl submit rt=0x%02x req=0x%02x len=%d\n",
-			   s ? s[0] : 0, s ? s[1] : 0, len);
+			   req ? req->bRequestType : 0, req ? req->bRequest : 0, len);
 		return lh->ops.submit_control(lh->ops.cookie,
-					      (const unsigned char *)urb->setup_packet,
-					      urb->transfer_buffer, len);
+					      (const struct lkl_usb_setup *)urb->setup_packet,
+					      urb->transfer_buffer);
 	}
 
 	u8 ep = usb_pipeendpoint(pipe) | (usb_pipein(pipe) ? 0x80 : 0);
@@ -141,10 +150,22 @@ static bool lkl_hcd_has_runnable(struct lkl_hcd *lh)
 	return found;
 }
 
+static int lkl_hcd_add(struct lkl_hcd *lh, bool superspeed);
+
 static void lkl_hcd_apply_pending(struct lkl_hcd *lh)
 {
 	unsigned long flags;
 	bool changed = false;
+
+	if (lkl_usb_attach_pending && !lh->hcd) {
+		int ret = lkl_hcd_add(lh, lkl_usb_pending_ops.superspeed);
+
+		if (ret) {
+			lkl_hcd_dbg("lkl-hcd: could not register root hub (%d)\n", ret);
+			lkl_usb_attach_pending = 0;
+			return;
+		}
+	}
 
 	spin_lock_irqsave(&lh->lock, flags);
 	if (lkl_usb_attach_pending) {
@@ -168,7 +189,8 @@ static void lkl_hcd_apply_pending(struct lkl_hcd *lh)
 	if (changed) {
 		lkl_hcd_dbg("lkl-hcd: port change applied (attached=%d, status=0x%08x), poking root hub\n",
 			   lh->attached, lh->port_status);
-		usb_hcd_poll_rh_status(lh->hcd);
+		if (lh->hcd)
+			usb_hcd_poll_rh_status(lh->hcd);
 	}
 }
 
@@ -212,17 +234,19 @@ static void lkl_hcd_submit_runnable(struct lkl_hcd *lh)
 			continue;
 		}
 		if (lkl_hcd_ctrl_ack_only(urb)) {
-			const u8 *s = (const u8 *)urb->setup_packet;
+			const struct usb_ctrlrequest *req =
+				(const struct usb_ctrlrequest *)urb->setup_packet;
+			u8 iface = le16_to_cpu(req->wIndex);
+			u8 alt = le16_to_cpu(req->wValue);
 			int status = 0;
 
-			if (s[1] == USB_REQ_SET_INTERFACE && lh->ops.set_alt) {
-				status = lh->ops.set_alt(lh->ops.cookie,
-							 s[4], s[2]);
+			if (req->bRequest == USB_REQ_SET_INTERFACE && lh->ops.set_alt) {
+				status = lh->ops.set_alt(lh->ops.cookie, iface, alt);
 				lkl_hcd_dbg("lkl-hcd: set_alt iface=%u alt=%u -> %d\n",
-					   s[4], s[2], status);
+					   iface, alt, status);
 			} else {
 				lkl_hcd_dbg("lkl-hcd: xfer ctrl std req 0x%02x ACKed (no forward)\n",
-					   s[1]);
+					   req->bRequest);
 			}
 			urb->actual_length = 0;
 			lkl_hcd_finish_urb(lh, urb, status);
@@ -423,6 +447,37 @@ static void lkl_hub_descriptor(struct usb_hub_descriptor *desc)
 	desc->u.hs.DeviceRemovable[1] = 0xff;
 }
 
+static void lkl_ss_hub_descriptor(struct usb_hub_descriptor *desc)
+{
+	memset(desc, 0, sizeof(*desc));
+	desc->bDescriptorType = USB_DT_SS_HUB;
+	desc->bDescLength = 12;
+	desc->wHubCharacteristics =
+		cpu_to_le16(HUB_CHAR_INDV_PORT_LPSM | HUB_CHAR_COMMON_OCPM);
+	desc->bNbrPorts = 1;
+	desc->u.ss.bHubHdrDecLat = 0x04;
+	desc->u.ss.DeviceRemovable = 0;
+}
+
+static struct {
+	struct usb_bos_descriptor bos;
+	struct usb_ss_cap_descriptor ss_cap;
+} __packed lkl_usb3_bos_desc = {
+	.bos = {
+		.bLength		= USB_DT_BOS_SIZE,
+		.bDescriptorType	= USB_DT_BOS,
+		.wTotalLength		= cpu_to_le16(sizeof(lkl_usb3_bos_desc)),
+		.bNumDeviceCaps		= 1,
+	},
+	.ss_cap = {
+		.bLength		= USB_DT_USB_SS_CAP_SIZE,
+		.bDescriptorType	= USB_DT_DEVICE_CAPABILITY,
+		.bDevCapabilityType	= USB_SS_CAP_TYPE,
+		.wSpeedSupported	= cpu_to_le16(USB_5GBPS_OPERATION),
+		.bFunctionalitySupport	= ilog2(USB_5GBPS_OPERATION),
+	},
+};
+
 static int lkl_hcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 			       u16 wIndex, char *buf, u16 wLength)
 {
@@ -461,14 +516,35 @@ static int lkl_hcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 			lh->port_status &= ~(USB_PORT_STAT_C_RESET << 16);
 			break;
 		case USB_PORT_FEAT_POWER:
-			lh->port_status &= ~USB_PORT_STAT_POWER;
+			lh->port_status &= hcd->speed == HCD_USB3 ?
+				~USB_SS_PORT_STAT_POWER : ~USB_PORT_STAT_POWER;
+			break;
+		case USB_PORT_FEAT_C_BH_PORT_RESET:
+			lh->port_status &= ~(USB_PORT_STAT_C_BH_RESET << 16);
 			break;
 		default:
 			break;
 		}
 		break;
 	case GetHubDescriptor:
-		lkl_hub_descriptor((struct usb_hub_descriptor *)buf);
+		if (hcd->speed == HCD_USB3) {
+			if (wLength < USB_DT_SS_HUB_SIZE ||
+			    wValue != (USB_DT_SS_HUB << 8)) {
+				ret = -EPIPE;
+				break;
+			}
+			lkl_ss_hub_descriptor((struct usb_hub_descriptor *)buf);
+		} else {
+			lkl_hub_descriptor((struct usb_hub_descriptor *)buf);
+		}
+		break;
+	case DeviceRequest | USB_REQ_GET_DESCRIPTOR:
+		if (hcd->speed != HCD_USB3 || (wValue >> 8) != USB_DT_BOS) {
+			ret = -EPIPE;
+			break;
+		}
+		memcpy(buf, &lkl_usb3_bos_desc, sizeof(lkl_usb3_bos_desc));
+		ret = sizeof(lkl_usb3_bos_desc);
 		break;
 	case GetHubStatus:
 		*(__le32 *)buf = cpu_to_le32(0);
@@ -484,18 +560,38 @@ static int lkl_hcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 	case SetPortFeature:
 		switch (wValue) {
 		case USB_PORT_FEAT_SUSPEND:
+			if (hcd->speed == HCD_USB3) {
+				ret = -EPIPE;
+				break;
+			}
 			lh->port_status |= USB_PORT_STAT_SUSPEND;
 			break;
 		case USB_PORT_FEAT_POWER:
-			lh->port_status |= USB_PORT_STAT_POWER;
+			lh->port_status |= hcd->speed == HCD_USB3 ?
+				USB_SS_PORT_STAT_POWER : USB_PORT_STAT_POWER;
 			break;
+		case USB_PORT_FEAT_LINK_STATE:
+		case USB_PORT_FEAT_U1_TIMEOUT:
+		case USB_PORT_FEAT_U2_TIMEOUT:
+			if (hcd->speed != HCD_USB3)
+				ret = -EPIPE;
+			break;
+		case USB_PORT_FEAT_BH_PORT_RESET:
 		case USB_PORT_FEAT_RESET:
 			lh->port_status &= ~(USB_PORT_STAT_RESET |
-					     USB_PORT_STAT_LOW_SPEED);
-			lh->port_status |= USB_PORT_STAT_ENABLE |
-					   USB_PORT_STAT_HIGH_SPEED |
-					   (USB_PORT_STAT_C_RESET << 16);
-			lkl_hcd_dbg("lkl-hcd: port RESET -> enabled, hi-speed (status=0x%08x)\n",
+					     USB_PORT_STAT_LOW_SPEED |
+					     USB_PORT_STAT_HIGH_SPEED);
+			if (hcd->speed == HCD_USB3) {
+				lh->port_status &= ~USB_PORT_STAT_LINK_STATE;
+				lh->port_status |= USB_SS_PORT_LS_U0 |
+						   USB_PORT_STAT_ENABLE |
+						   (USB_PORT_STAT_C_RESET << 16);
+			} else {
+				lh->port_status |= USB_PORT_STAT_ENABLE |
+						   USB_PORT_STAT_HIGH_SPEED |
+						   (USB_PORT_STAT_C_RESET << 16);
+			}
+			lkl_hcd_dbg("lkl-hcd: port RESET -> enabled (status=0x%08x)\n",
 				   lh->port_status);
 			break;
 		default:
@@ -524,7 +620,7 @@ static void lkl_hcd_stop(struct usb_hcd *hcd)
 	hcd->state = HC_STATE_HALT;
 }
 
-static const struct hc_driver lkl_hc_driver = {
+static struct hc_driver lkl_hc_driver = {
 	.description = DRIVER_NAME,
 	.product_desc = "LKL host-backed USB controller",
 	.hcd_priv_size = sizeof(struct lkl_hcd *),
@@ -537,6 +633,33 @@ static const struct hc_driver lkl_hc_driver = {
 	.hub_status_data = lkl_hcd_hub_status,
 	.hub_control = lkl_hcd_hub_control,
 };
+
+static int lkl_hcd_add(struct lkl_hcd *lh, bool superspeed)
+{
+	struct usb_hcd *hcd;
+	int ret;
+
+	lkl_hc_driver.flags = superspeed ? HCD_USB3 : HCD_USB2;
+
+	hcd = usb_create_hcd(&lkl_hc_driver, &lh->pdev->dev,
+			     dev_name(&lh->pdev->dev));
+	if (!hcd)
+		return -ENOMEM;
+
+	*((struct lkl_hcd **)hcd->hcd_priv) = lh;
+	lh->hcd = hcd;
+
+	ret = usb_add_hcd(hcd, 0, 0);
+	if (ret) {
+		lh->hcd = NULL;
+		usb_put_hcd(hcd);
+		return ret;
+	}
+
+	lkl_hcd_dbg("lkl-hcd: root hub registered as %s\n",
+		   superspeed ? "SuperSpeed" : "high speed");
+	return 0;
+}
 
 int lkl_usb_attach(const struct lkl_usb_host_ops *ops)
 {
@@ -566,7 +689,6 @@ EXPORT_SYMBOL_GPL(lkl_usb_detach);
 
 static int lkl_hcd_probe(struct platform_device *pdev)
 {
-	struct usb_hcd *hcd;
 	struct lkl_hcd *lh;
 	int ret;
 
@@ -591,34 +713,20 @@ static int lkl_hcd_probe(struct platform_device *pdev)
 		goto err_free;
 	}
 
-	hcd = usb_create_hcd(&lkl_hc_driver, &pdev->dev, dev_name(&pdev->dev));
-	if (!hcd) {
-		ret = -ENOMEM;
-		goto err_irq;
-	}
-	*((struct lkl_hcd **)hcd->hcd_priv) = lh;
-	lh->hcd = hcd;
+	lh->pdev = pdev;
 
 	lkl_hcd_dbg("lkl-hcd starting reactor\n");
 	lh->worker = kthread_run(lkl_hcd_worker, lh, "lkl-hcd");
 	if (IS_ERR(lh->worker)) {
 		ret = PTR_ERR(lh->worker);
 		lh->worker = NULL;
-		goto err_put;
+		goto err_irq;
 	}
 
-	ret = usb_add_hcd(hcd, 0, 0);
-	if (ret)
-		goto err_thread;
-
 	lkl_hcd_singleton = lh;
-	platform_set_drvdata(pdev, hcd);
+	platform_set_drvdata(pdev, lh);
 	return 0;
 
-err_thread:
-	kthread_stop(lh->worker);
-err_put:
-	usb_put_hcd(hcd);
 err_irq:
 	free_irq(lh->irq, lh);
 	lkl_put_irq(lh->irq, "lkl-hcd");
@@ -635,15 +743,16 @@ EXPORT_SYMBOL_GPL(lkl_usb_completion_irq);
 
 static void lkl_hcd_remove(struct platform_device *pdev)
 {
-	struct usb_hcd *hcd = platform_get_drvdata(pdev);
-	struct lkl_hcd *lh = hcd_to_lkl(hcd);
+	struct lkl_hcd *lh = platform_get_drvdata(pdev);
 
 	lkl_hcd_singleton = NULL;
-	usb_remove_hcd(hcd);
+	if (lh->hcd)
+		usb_remove_hcd(lh->hcd);
 	kthread_stop(lh->worker);
 	free_irq(lh->irq, lh);
 	lkl_put_irq(lh->irq, "lkl-hcd");
-	usb_put_hcd(hcd);
+	if (lh->hcd)
+		usb_put_hcd(lh->hcd);
 	kfree(lh);
 }
 
